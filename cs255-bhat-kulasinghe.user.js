@@ -1,7 +1,7 @@
 // ==UserScript==
-// @namespace      CS255--Lastname2
-// @name           CS255-Lastname1-Lastname2
-// @description    CS255-Lastname1-Lastname2 - CS255 Assignment 1
+// @namespace      CS255-bhat-kulasinghe
+// @name           CS255-bhat-kulasinghe
+// @description    CS255-bhat-kulasinghe - CS255 Assignment 1
 // @version        1.4
 //
 // 
@@ -37,13 +37,14 @@ var keys = {}; // association map of keys: group -> key
 // @return {String} Encryption of the plaintext, encoded as a string.
 function Encrypt(plainText, group) {
   // CS255-todo: encrypt the plainText, using key for the group.
-  if ((plainText.indexOf('rot13:') == 0) || (plainText.length < 1)) {
+  var cipher = new sjcl.cipher.aes(keys[group]);
+  if ((plainText.indexOf('aes:') == 0) || (plainText.length < 1)) {
     // already done, or blank
     alert("Try entering a message (the button works only once)");
     return plainText;
   } else {
     // encrypt, add tag.
-    return 'rot13:' + rot13(plainText);
+    return 'aes:' + cipher.encrypt(plainText);
   }
 
 }
@@ -57,11 +58,12 @@ function Encrypt(plainText, group) {
 function Decrypt(cipherText, group) {
 
   // CS255-todo: implement decryption on encrypted messages
+    var cipher = new sjcl.cipher.aes(keys[group]);
 
-  if (cipherText.indexOf('rot13:') == 0) {
+  if (cipherText.indexOf('aes:') == 0) {
 
     // decrypt, ignore the tag.
-    var decryptedMsg = rot13(cipherText.slice(6));
+    var decryptedMsg = cipher.decrypt(cipherText.slice(4));
     return decryptedMsg;
 
   } else {
@@ -75,9 +77,8 @@ function Decrypt(cipherText, group) {
 function GenerateKey(group) {
 
   // CS255-todo: Well this needs some work...
-  var key = 'CS255-todo';
-
-  keys[group] = key;
+  var key = GetRandomValues(128);
+  keys[group] = sjcl.codec.base64.fromBits(key);
   SaveKeys();
 }
 
@@ -85,22 +86,117 @@ function GenerateKey(group) {
 function SaveKeys() {
   
   // CS255-todo: plaintext keys going to disk?
-  var key_str = JSON.stringify(keys);
+    debugger;
+  var userKey = getUserKey();
 
-  localStorage.setItem('facebook-keys-' + my_username, encodeURIComponent(key_str));
+  var cipher = new sjcl.cipher.aes(userKey);
+
+
+  var key_str = JSON.stringify(keys);
+  var key_bits = sjcl.codec.utf8String.toBits(key_str);
+
+    // Padding
+
+    var lastIndex = key_bits.length - 1;
+
+    var extraWords = 4 - (key_bits.length % 4);
+    if (extraWords)
+    {
+        var padding = [];
+        padding[0] = 1 << 31;
+        for (var i = 0;i<extraWords-1;i++)
+        {
+            padding[i+1] = 0;
+        }
+        key_bits = sjcl.bitArray.concat(key_bits,padding);
+    }
+    var i = 0;
+    var encrypted_str = [];
+    while (i+3<key_bits.length)
+    {
+
+        var wordBlock = sjcl.bitArray.bitSlice(key_bits,32*i,32*i+128);
+        var ctext = cipher.encrypt(wordBlock);
+        var encrypted_str = sjcl.bitArray.concat(encrypted_str,ctext);
+        i = i + 4;
+    }
+    /*
+  var remaining = sjcl.bitArray.bitSlice(key_bits,i);
+    var partialBlock = sjcl.bitArray.partial(sjcl.bitArray.bitLength(remaining),remaining);
+    var ctext = cipher.encrypt(partialBlock);
+    encrypted_str = sjcl.bitArray.concat(encrypted_str,ctext);
+  */
+  localStorage.setItem('facebook-keys-' + my_username, encodeURIComponent(sjcl.codec.utf8String.fromBits(encrypted_str)));
 }
 
 // Load the group keys from disk.
 function LoadKeys() {
+  var userKey = getUserKey();
+  debugger;
   keys = {}; // Reset the keys.
+
   var saved = localStorage.getItem('facebook-keys-' + my_username);
-  if (saved) {
-    var key_str = decodeURIComponent(saved);
-    // CS255-todo: plaintext keys were on disk?
-    keys = JSON.parse(key_str);
-  }
+  if (saved)
+  {
+        var cipher = new sjcl.cipher.aes(userKey);
+        var key_str = decodeURIComponent(saved);
+        var key_bits = sjcl.codec.utf8String.toBits(key_str);
+        var i = 0;
+        var decrypted_str = [];
+        while(i+3 < key_bits.length)
+        {
+            var wordBlock = sjcl.bitArray.bitSlice(key_bits,32*i,32*i+128);
+            var ptext = cipher.decrypt(wordBlock);
+            decrypted_str = sjcl.bitArray.concat(decrypted_str,ptext);
+            i = i + 4;
+        }
+    // remove padding
+        i = decrypted_str.length-1;
+
+        while(decrypted_str[i] != (1<<31) && i>0)
+        {
+            decrypted_str.length = decrypted_str.length - 1;
+            i--;
+        }
+        decrypted_str.length = decrypted_str.length - 1;
+
+
+        var key_mapString = sjcl.codec.utf8String.fromBits(key_str);
+        keys = JSON.parse(key_mapString);
+    }
 }
 
+function getUserKey()
+{
+    debugger;
+    var storeddbKey = sessionStorage.getItem('user-keys-' + my_username);
+    if (!storeddbKey)
+    {
+        var dbpass = prompt('Enter key database password');
+        debugger;
+        var stored_salt = localStorage.getItem('user-salt-' + my_username);
+        if (stored_salt)
+        {
+            var salt = JSON.parse(decodeURIComponent(stored_salt));
+        }
+        else
+        {
+            var salt = GetRandomValues(128);
+            var save_salt = JSON.stringify(salt);
+            localStorage.setItem('user-salt-' + my_username,encodeURIComponent(save_salt));
+        }
+
+        var keyArray = sjcl.misc.pbkdf2(dbpass, salt, null, 128);
+        var key_str = sjcl.codec.base64.fromBits(keyArray);
+        sessionStorage.setItem('user-keys-' + my_username,encodeURIComponent(key_str));
+    }
+    else
+    {
+        var key_str = decodeURIComponent(storeddbKey);
+        var keyArray = sjcl.codec.base64.toBits(key_str);
+    }
+    return keyArray;
+}
 /////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////
 //
@@ -392,7 +488,7 @@ function GenerateKeyWrapper() {
     alert("You need to set a group");
     return;
   }
-
+    debugger;
   GenerateKey(group);
   
   UpdateKeysTable();
@@ -1527,6 +1623,7 @@ sjcl.hash.sha256.prototype = {
 
 
 // This is the initialization
+
 SetupUsernames();
 LoadKeys();
 AddElements();
