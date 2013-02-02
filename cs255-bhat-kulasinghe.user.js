@@ -104,11 +104,13 @@ function SaveKeys() {
     {
         var padding = [];
         padding[0] = 1 << 31;
+        key_bits.push(padding[0]);
         for (var i = 0;i<extraWords-1;i++)
         {
             padding[i+1] = 0;
+            key_bits.push(padding[i+1]);
         }
-        key_bits = sjcl.bitArray.concat(key_bits,padding);
+
     }
     var i = 0;
     var encrypted_str = [];
@@ -117,73 +119,122 @@ function SaveKeys() {
 
         var wordBlock = sjcl.bitArray.bitSlice(key_bits,32*i,32*i+128);
         var ctext = cipher.encrypt(wordBlock);
-        var encrypted_str = sjcl.bitArray.concat(encrypted_str,ctext);
+        for (var k = 0;k<4;k++)
+        {
+            encrypted_str.push(ctext[k]);
+        }
+        //var encrypted_str = sjcl.bitArray.concat(encrypted_str,ctext);
         i = i + 4;
     }
+    var saved_key = encodeURIComponent(sjcl.codec.base64.fromBits(encrypted_str));
+
+    // Verification of encryption-decryption
+    /*
+    var retreived_key = sjcl.codec.base64.toBits(decodeURIComponent(saved_key));
+
+    var i = 0;
+    var decrypted_str = [];
+    while(i+3 < retreived_key.length)
+    {
+        var wordBlock = sjcl.bitArray.bitSlice(retreived_key,32*i,32*i+128);
+        var ptext = cipher.decrypt(wordBlock);
+        for (var k = 0;k<4;k++)
+        {
+            decrypted_str.push(ptext[k]);
+        }
+        //decrypted_str = sjcl.bitArray.concat(decrypted_str,ptext);
+        i = i + 4;
+    }
+    // remove padding
+    i = decrypted_str.length-1;
+
+    while(decrypted_str[i] != (1<<31) && (i > 0))
+    {
+        decrypted_str.length = decrypted_str.length - 1;
+        i--;
+    }
+    decrypted_str.length = decrypted_str.length - 1;
+
+    var key_map_string = sjcl.codec.utf8String.fromBits(decrypted_str);
+    debugger;
+    //keys = JSON.parse(key_map_string);
+    */
     /*
   var remaining = sjcl.bitArray.bitSlice(key_bits,i);
     var partialBlock = sjcl.bitArray.partial(sjcl.bitArray.bitLength(remaining),remaining);
     var ctext = cipher.encrypt(partialBlock);
     encrypted_str = sjcl.bitArray.concat(encrypted_str,ctext);
   */
-  localStorage.setItem('facebook-keys-' + my_username, encodeURIComponent(sjcl.codec.utf8String.fromBits(encrypted_str)));
+  cs255.localStorage.setItem('facebook-keys-' + my_username, saved_key);
+  var checkSave = cs255.localStorage.getItem('facebook-keys-' + my_username);
+
 }
 
 // Load the group keys from disk.
+
 function LoadKeys() {
+
   var userKey = getUserKey();
   debugger;
   keys = {}; // Reset the keys.
 
-  var saved = localStorage.getItem('facebook-keys-' + my_username);
+  var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
   if (saved)
   {
-        var cipher = new sjcl.cipher.aes(userKey);
-        var key_str = decodeURIComponent(saved);
-        var key_bits = sjcl.codec.utf8String.toBits(key_str);
-        var i = 0;
-        var decrypted_str = [];
-        while(i+3 < key_bits.length)
-        {
-            var wordBlock = sjcl.bitArray.bitSlice(key_bits,32*i,32*i+128);
-            var ptext = cipher.decrypt(wordBlock);
-            decrypted_str = sjcl.bitArray.concat(decrypted_str,ptext);
-            i = i + 4;
-        }
-    // remove padding
-        i = decrypted_str.length-1;
+      var cipher = new sjcl.cipher.aes(userKey);
+      var retreived_key = sjcl.codec.base64.toBits(decodeURIComponent(saved));
 
-        while(decrypted_str[i] != (1<<31) && i>0)
-        {
-            decrypted_str.length = decrypted_str.length - 1;
-            i--;
-        }
-        decrypted_str.length = decrypted_str.length - 1;
+      var i = 0;
+      var decrypted_str = [];
+      while(i+3 < retreived_key.length)
+      {
+          var wordBlock = sjcl.bitArray.bitSlice(retreived_key,32*i,32*i+128);
+          var ptext = cipher.decrypt(wordBlock);
+          for (var k = 0;k<4;k++)
+          {
+              decrypted_str.push(ptext[k]);
+          }
+          //decrypted_str = sjcl.bitArray.concat(decrypted_str,ptext);
+          i = i + 4;
+      }
+      // remove padding
+      i = decrypted_str.length-1;
 
+      while(decrypted_str[i] != (1<<31) && (i > 0))
+      {
+          decrypted_str.length = decrypted_str.length - 1;
+          i--;
+      }
+      decrypted_str.length = decrypted_str.length - 1;
 
-        var key_mapString = sjcl.codec.utf8String.fromBits(key_str);
-        keys = JSON.parse(key_mapString);
-    }
+      var key_map_string = sjcl.codec.utf8String.fromBits(decrypted_str);
+      debugger;
+      var buff = '';
+      for (var i = 0;i<key_map_string.length-3;i++)
+      {
+          buff = buff + key_map_string.charAt(i);
+      }
+      keys = JSON.parse(buff);
+  }
 }
 
 function getUserKey()
 {
-    debugger;
     var storeddbKey = sessionStorage.getItem('user-keys-' + my_username);
     if (!storeddbKey)
     {
         var dbpass = prompt('Enter key database password');
         debugger;
-        var stored_salt = localStorage.getItem('user-salt-' + my_username);
+        var stored_salt = cs255.localStorage.getItem('user-salt-' + my_username);
         if (stored_salt)
         {
-            var salt = JSON.parse(decodeURIComponent(stored_salt));
+            var salt = decodeURIComponent(stored_salt);
         }
         else
         {
             var salt = GetRandomValues(128);
-            var save_salt = JSON.stringify(salt);
-            localStorage.setItem('user-salt-' + my_username,encodeURIComponent(save_salt));
+            //var save_salt = JSON.stringify(salt);
+            cs255.localStorage.setItem('user-salt-' + my_username,encodeURIComponent(salt));
         }
 
         var keyArray = sjcl.misc.pbkdf2(dbpass, salt, null, 128);
@@ -196,6 +247,36 @@ function getUserKey()
         var keyArray = sjcl.codec.base64.toBits(key_str);
     }
     return keyArray;
+}
+
+var cs255 = {
+    localStorage: {
+        setItem: function(key, value) {
+            localStorage.setItem(key, value);
+            var newEntries = {};
+            newEntries[key] = value;
+            chrome.storage.local.set(newEntries);
+        },
+        getItem: function(key) {
+            return localStorage.getItem(key);
+        },
+        clear: function() {
+            chrome.storage.local.clear();
+        }
+    }
+}
+
+if (typeof chrome.storage === "undefined") {
+    var id = function() {};
+    chrome.storage = {local: {get: id, set: id}};
+}
+else {
+    // See if there are any values stored with the extension.
+    chrome.storage.local.get(null, function(onDisk) {
+        for (key in onDisk) {
+            localStorage.setItem(key, onDisk[key]);
+        }
+    });
 }
 /////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////
