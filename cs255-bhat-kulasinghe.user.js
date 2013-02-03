@@ -30,6 +30,9 @@ var keys = {}; // association map of keys: group -> key
 // Some initialization functions are called at the very end of this script.
 // You only have to edit the top portion.
 
+/*
+ n byte padding by putting [n n n] ... n times.
+ */
 function addPadding(text)
 {
     var lastIndex = text.length - 1;
@@ -39,24 +42,12 @@ function addPadding(text)
     {
         text.push(extraWords);
     }
-    /*
-    if (extraWords)
-    {
-        var padding = [];
-        padding[0] = 1 << 31;
-        text.push(padding[0]);
-        for (var i = 0;i<extraWords-1;i++)
-        {
-            padding[i+1] = 0;
-            text.push(padding[i+1]);
-        }
-
-    }
-    */
     return text;
 }
 
-
+/*
+ currently creates a copy of the original text and returns the copy after removing padding.
+ */
 function removePadding(text)
 {
     var text_copy = [];
@@ -71,32 +62,19 @@ function removePadding(text)
         text_copy[i] = text[i];
     }
     return text_copy;
-    /*
-    var i = text_copy.length-1;
-
-
-    while(text_copy[i] != (1<<31) && (i > 0))
-    {
-        text_copy.length = text_copy.length - 1;
-        i--;
-    }
-    text_copy.length = text_copy.length - 1;
-    if (text_copy.length==0)
-    {
-        console.log('No Padding!');
-        return text;
-    }
-    else    return text_copy;
-    */
 }
 
-
+/*
+CBC with random 128 bit IV. The IV is embedded in the first 4 words of the cipher text
+ */
 function cbc_encrypt(ptext,cipher)
 {
     var iv = GetRandomValues(4);
     var i = 0;
     var prev = [iv[0],iv[1],iv[2],iv[3]];
     var encrypted_str = [];
+
+    //embed IV
     for (var k = 0;k<4;k++)
     {
         encrypted_str.push(iv[k]);
@@ -153,7 +131,7 @@ function cbc_decrypt(ctext,cipher)
 // @param {String} group Group name.
 // @return {String} Encryption of the plaintext, encoded as a string.
 function Encrypt(plainText, group) {
-  // CS255-todo: encrypt the plainText, using key for the group.
+
   var key = sjcl.codec.base64.toBits(keys[group]);
   var cipher = new sjcl.cipher.aes(key);
 
@@ -165,9 +143,7 @@ function Encrypt(plainText, group) {
     // encrypt, add tag.
     var ptext = addPadding(sjcl.codec.utf8String.toBits(plainText));
     var encrypted_msg = cbc_encrypt(ptext,cipher);
-    var outputString = 'aes:' + sjcl.codec.base64.fromBits(encrypted_msg);
-    var sanityCheck = Decrypt(outputString,group);
-    return outputString;
+    return 'aes:' + sjcl.codec.base64.fromBits(encrypted_msg);
   }
 
 }
@@ -180,7 +156,7 @@ function Encrypt(plainText, group) {
 // @return {String} Decryption of the ciphertext.
 function Decrypt(cipherText, group) {
 
-  // CS255-todo: implement decryption on encrypted messages
+
     var key = sjcl.codec.base64.toBits(keys[group]);
     var cipher = new sjcl.cipher.aes(key);
     if (cipherText.indexOf('aes:') == 0) {
@@ -208,8 +184,6 @@ function Decrypt(cipherText, group) {
 //
 // @param {String} group Group name.
 function GenerateKey(group) {
-
-  // CS255-todo: Well this needs some work...
   var key = GetRandomValues(4);
   keys[group] = sjcl.codec.base64.fromBits(key);
   SaveKeys();
@@ -218,13 +192,9 @@ function GenerateKey(group) {
 // Take the current group keys, and save them to disk.
 function SaveKeys() {
 
-    if (!my_username) return;
-  // CS255-todo: plaintext keys going to disk?
-    debugger;
+  if (!my_username) return;
   var userKey = getUserKey();
-
   var cipher = new sjcl.cipher.aes(userKey);
-
 
   var key_str = JSON.stringify(keys);
   var padded = addPadding(sjcl.codec.utf8String.toBits(key_str));
@@ -238,7 +208,7 @@ function LoadKeys() {
 
     if (!my_username) return;
     var userKey = getUserKey();
-    debugger;
+
     keys = {}; // Reset the keys.
 
     var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
@@ -248,11 +218,15 @@ function LoadKeys() {
         var retreived_key = sjcl.codec.base64.toBits(decodeURIComponent(saved));
         var decrypted_msg = cbc_decrypt(retreived_key,cipher);
         var withoutPadding = removePadding(decrypted_msg);
+
+        //catch error when trying to decrypt with wrong key
         if (withoutPadding.length == decrypted_msg.length)
         {
             return;
         }
         var ptext_db = sjcl.codec.utf8String.fromBits(withoutPadding);
+
+        // This is to remove terminating nulls, which JSON.parse hates
         var buff = '';
         for (var i = 0;i<ptext_db.length && ptext_db.charCodeAt(i) != 0;i++)
         {
@@ -268,7 +242,6 @@ function getUserKey()
     if (!storeddbKey)
     {
         var dbpass = prompt('Enter key database password');
-        debugger;
         var stored_salt = cs255.localStorage.getItem('user-salt-' + my_username);
         if (stored_salt)
         {
@@ -277,7 +250,6 @@ function getUserKey()
         else
         {
             var salt = GetRandomValues(4);
-            //var save_salt = JSON.stringify(salt);
             var salt_string = sjcl.codec.base64.fromBits(salt);
             cs255.localStorage.setItem('user-salt-' + my_username,encodeURIComponent(salt_string));
         }
@@ -637,7 +609,6 @@ function GenerateKeyWrapper() {
     alert("You need to set a group");
     return;
   }
-    debugger;
   GenerateKey(group);
   
   UpdateKeysTable();
