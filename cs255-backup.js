@@ -30,123 +30,6 @@ var keys = {}; // association map of keys: group -> key
 // Some initialization functions are called at the very end of this script.
 // You only have to edit the top portion.
 
-function addPadding(text)
-{
-    var lastIndex = text.length - 1;
-
-    var extraWords = 4 - (text.length % 4);
-    for (var i = 0;i<extraWords;i++)
-    {
-        text.push(extraWords);
-    }
-    /*
-    if (extraWords)
-    {
-        var padding = [];
-        padding[0] = 1 << 31;
-        text.push(padding[0]);
-        for (var i = 0;i<extraWords-1;i++)
-        {
-            padding[i+1] = 0;
-            text.push(padding[i+1]);
-        }
-
-    }
-    */
-    return text;
-}
-
-
-function removePadding(text)
-{
-    var text_copy = [];
-    var extraWords = text[text.length-1];
-    if (extraWords <= 0 || extraWords > 4)
-    {
-        console.log("Padding not removed");
-        return text;
-    }
-    for (var i = 0;i<(text.length-extraWords);i++)
-    {
-        text_copy[i] = text[i];
-    }
-    return text_copy;
-    /*
-    var i = text_copy.length-1;
-
-
-    while(text_copy[i] != (1<<31) && (i > 0))
-    {
-        text_copy.length = text_copy.length - 1;
-        i--;
-    }
-    text_copy.length = text_copy.length - 1;
-    if (text_copy.length==0)
-    {
-        console.log('No Padding!');
-        return text;
-    }
-    else    return text_copy;
-    */
-}
-
-
-function cbc_encrypt(ptext,cipher)
-{
-    var iv = GetRandomValues(4);
-    var i = 0;
-    var prev = [iv[0],iv[1],iv[2],iv[3]];
-    var encrypted_str = [];
-    for (var k = 0;k<4;k++)
-    {
-        encrypted_str.push(iv[k]);
-    }
-    while(i+3<ptext.length)
-    {
-        var block = [];
-        for (var k = 0;k<4;k++)
-        {
-            block.push(ptext[i+k]);
-        }
-        var input_aes = [prev[0]^block[0],prev[1]^block[1],prev[2]^block[2],prev[3]^block[3]];
-        var ctext = cipher.encrypt(input_aes);
-
-        for (var k = 0;k<4;k++)
-        {
-            prev[k] = ctext[k];
-            encrypted_str.push(ctext[k]);
-        }
-        i = i + 4;
-    }
-
-    return encrypted_str;
-}
-
-function cbc_decrypt(ctext,cipher)
-{
-    var decrypted_msg = [];
-    var iv = [ctext[0],ctext[1],ctext[2],ctext[3]];
-    var prev = [iv[0],iv[1],iv[2],iv[3]];
-    var i = 4;
-    while(i+3<ctext.length)
-    {
-        var wordBlock = [];
-        for (var k = 0;k<4;k++)
-        {
-            wordBlock.push(ctext[i+k]);
-        }
-        var aes_output = cipher.decrypt(wordBlock);
-        var ptext = [aes_output[0]^prev[0],aes_output[1]^prev[1],aes_output[2]^prev[2],aes_output[3]^prev[3]];
-        for (var k = 0;k<4;k++)
-        {
-            decrypted_msg.push(ptext[k]);
-            prev[k] = wordBlock[k];
-        }
-        i = i + 4;
-    }
-    return decrypted_msg;
-}
-
 // Return the encryption of the message for the given group, in the form of a string.
 //
 // @param {String} plainText String to encrypt.
@@ -154,20 +37,14 @@ function cbc_decrypt(ctext,cipher)
 // @return {String} Encryption of the plaintext, encoded as a string.
 function Encrypt(plainText, group) {
   // CS255-todo: encrypt the plainText, using key for the group.
-  var key = sjcl.codec.base64.toBits(keys[group]);
-  var cipher = new sjcl.cipher.aes(key);
-
+  var cipher = new sjcl.cipher.aes(keys[group]);
   if ((plainText.indexOf('aes:') == 0) || (plainText.length < 1)) {
     // already done, or blank
     alert("Try entering a message (the button works only once)");
     return plainText;
   } else {
     // encrypt, add tag.
-    var ptext = addPadding(sjcl.codec.utf8String.toBits(plainText));
-    var encrypted_msg = cbc_encrypt(ptext,cipher);
-    var outputString = 'aes:' + sjcl.codec.base64.fromBits(encrypted_msg);
-    var sanityCheck = Decrypt(outputString,group);
-    return outputString;
+    return 'aes:' + cipher.encrypt(plainText);
   }
 
 }
@@ -181,23 +58,13 @@ function Encrypt(plainText, group) {
 function Decrypt(cipherText, group) {
 
   // CS255-todo: implement decryption on encrypted messages
-    var key = sjcl.codec.base64.toBits(keys[group]);
-    var cipher = new sjcl.cipher.aes(key);
-    if (cipherText.indexOf('aes:') == 0) {
+    var cipher = new sjcl.cipher.aes(keys[group]);
+
+  if (cipherText.indexOf('aes:') == 0) {
 
     // decrypt, ignore the tag.
-    var ctext = sjcl.codec.base64.toBits(cipherText.slice(4));
-    var decrypted_msg = cbc_decrypt(ctext,cipher);
-    var withoutPadding = removePadding(decrypted_msg);
-    if (withoutPadding.length < decrypted_msg.length)
-    {
-    var ptext = sjcl.codec.utf8String.fromBits(removePadding(decrypted_msg));
-    return ptext;
-    }
-    else
-    {
-        throw "Cannot decrypt";
-    }
+    var decryptedMsg = cipher.decrypt(cipherText.slice(4));
+    return decryptedMsg;
 
   } else {
     throw "not encrypted";
@@ -208,84 +75,160 @@ function Decrypt(cipherText, group) {
 //
 // @param {String} group Group name.
 function GenerateKey(group) {
-
-  // CS255-todo: Well this needs some work...
-  var key = GetRandomValues(4);
+debugger;  
+var key = GetRandomValues(128);
+  console.log(sjcl.codec.base64.fromBits(key).length);
   keys[group] = sjcl.codec.base64.fromBits(key);
+  console.log("Generated key for group. Now saving key-database");
   SaveKeys();
 }
 
-// Take the current group keys, and save them to disk.
-function SaveKeys() {
-
-    if (!my_username) return;
-  // CS255-todo: plaintext keys going to disk?
-    debugger;
-  var userKey = getUserKey();
-
-  var cipher = new sjcl.cipher.aes(userKey);
 
 
-  var key_str = JSON.stringify(keys);
-  var padded = addPadding(sjcl.codec.utf8String.toBits(key_str));
-  var encrypted_db = cbc_encrypt(padded,cipher);
-  var saved_key = encodeURIComponent(sjcl.codec.base64.fromBits(encrypted_db));
-  cs255.localStorage.setItem('facebook-keys-' + my_username, saved_key);
+//encrypt a given base64 string. used in SaveKeys()
+function KeyEncrypt(cipher, ptext){
+  var key_bits = sjcl.codec.base64.toBits(ptext); //convert flattened key-database to bit array
+
+  // Padding
+  var extraWords = 4 - key_bits.length % 4;
+  if (extraWords != 4)
+  {
+      var padding = [];
+      padding[0] = 1 << 31;
+      for (var i = 1; i<extraWords; i++) padding[i] = 0;
+      key_bits = sjcl.bitArray.concat(key_bits,padding);
+  }
+
+  //Encrypting
+  var encrypted_arr = [];
+  for(var i=0; i<key_bits.length; i+=4)
+  {
+      var wordBlock = sjcl.bitArray.bitSlice(key_bits,32*i,32*i+128);
+      var ctext = cipher.encrypt(wordBlock);
+      encrypted_arr = sjcl.bitArray.concat(encrypted_arr,ctext);
+  }
+
+  return sjcl.codec.base64.fromBits(encrypted_arr);
+}
+
+//decrypt a given base64 string. used in LoadKeys()
+function KeyDecrypt(cipher, ctext){
+  var key_bits = sjcl.codec.base64.toBits(ctext); //convert flattened key-database to bit array
+
+  var decrypted_arr = [];
+  for(var i=0; i<key_bits.length; i+=4)
+  {
+    var wordBlock = sjcl.bitArray.bitSlice(key_bits,32*i,32*i+128);
+    var ptext = cipher.decrypt(wordBlock);
+    decrypted_arr = sjcl.bitArray.concat(decrypted_arr,ptext);
+  }
+
+  //Remove Padding
+  var shift = 0;
+  for(var i = decrypted_arr.length - 1; i>0; i--)
+  {
+    shift++;
+    if(decrypted_arr[i] == (1<<31))
+    {
+      decrypted_arr.length -= shift;
+      break;
+    }
+    else if(decrypted_arr[i] != 0) break;
+  }
+
+  return sjcl.codec.base64.fromBits(decrypted_arr);
 }
 
 
+// Take the current group keys, and save them to disk.
+function SaveKeys() {
+	debugger;
+  if(my_username == null){
+    console.log("No username detected, cancelling key save.");
+    return;
+  }
+
+  //Obtain user key / cipher
+  var userKey = getUserKey();
+  console.log("Obtained user key in SaveKeys()");
+
+  var cipher = new sjcl.cipher.aes(userKey);
+ 
+  var keys_en = {}
+  for(var group in keys)
+  {
+    var group_en = KeyEncrypt(cipher, group);
+    keys_en[group_en] = KeyEncrypt(cipher, keys[group]);
+  } 
+  var encrypted_str = JSON.stringify(keys_en);
+  console.log("Finished encrypting key-database");
+  
+  cs255.localStorage.setItem('facebook-keys-' + my_username, encodeURIComponent(encrypted_str));
+  console.log("Saved current key-database");
+}
+
+
+
+// Load the group keys from disk.
 function LoadKeys() {
+debugger;
+  if(my_username == null){
+    console.log("No username detected, cancelling key load.");
+    return;
+  }
 
-    if (!my_username) return;
-    var userKey = getUserKey();
-    debugger;
-    keys = {}; // Reset the keys.
+  //obtain keys / reset current key-database
+  var userKey = getUserKey();
+  console.log("Obtained user key in LoadKeys()");
+  keys = {}; // Reset the keys.
 
-    var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
-    if (saved)
+  var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
+  if(saved)
+  {
+    var cipher = new sjcl.cipher.aes(userKey); //generate cipher from user key
+    var keys_en = JSON.parse(decodeURIComponent(saved)); 
+    
+    for(var group_en in keys_en)
     {
-        var cipher = new sjcl.cipher.aes(userKey);
-        var retreived_key = sjcl.codec.base64.toBits(decodeURIComponent(saved));
-        var decrypted_msg = cbc_decrypt(retreived_key,cipher);
-        var withoutPadding = removePadding(decrypted_msg);
-        if (withoutPadding.length == decrypted_msg.length)
-        {
-            return;
-        }
-        var ptext_db = sjcl.codec.utf8String.fromBits(withoutPadding);
-        var buff = '';
-        for (var i = 0;i<ptext_db.length && ptext_db.charCodeAt(i) != 0;i++)
-        {
-            buff = buff + ptext_db.charAt(i);
-        }
-        keys = JSON.parse(buff);
-    }
+      var group = KeyDecrypt(cipher, group_en);
+      keys[group] = KeyDecrypt(cipher, keys_en[group_en]);
+    } 
+    var key_str = JSON.stringify(keys);
+    console.log("Loaded current key-database");
+  }
+  else console.log("No group keys detected.");
+    
 }
 
 function getUserKey()
 {
+	debugger;
+    console.log("Getting user key for " + my_username);
+    //check if user already entered key-database pw
     var storeddbKey = sessionStorage.getItem('user-keys-' + my_username);
     if (!storeddbKey)
     {
+        //obtain password (assume it is correct for now)
         var dbpass = prompt('Enter key database password');
-        debugger;
-        var stored_salt = cs255.localStorage.getItem('user-salt-' + my_username);
+        //obtain salt, generate it if not already there
+        var stored_salt = localStorage.getItem('user-salt-' + my_username);
+
         if (stored_salt)
         {
-            var salt = sjcl.codec.base64.toBits(decodeURIComponent(stored_salt));
+            var salt = JSON.parse(decodeURIComponent(stored_salt));
+            console.log("Retrieved salt.");
         }
         else
         {
-            var salt = GetRandomValues(4);
-            //var save_salt = JSON.stringify(salt);
-            var salt_string = sjcl.codec.base64.fromBits(salt);
-            cs255.localStorage.setItem('user-salt-' + my_username,encodeURIComponent(salt_string));
+            console.log("Salt not found, generating now.");
+            var salt = GetRandomValues(128);
+            var save_salt = JSON.stringify(salt);
+            cs255.localStorage.setItem('user-salt-' + my_username,encodeURIComponent(save_salt));
         }
 
         var keyArray = sjcl.misc.pbkdf2(dbpass, salt, null, 128);
         var key_str = sjcl.codec.base64.fromBits(keyArray);
         sessionStorage.setItem('user-keys-' + my_username,encodeURIComponent(key_str));
-        var checkSave = sessionStorage.getItem('user-keys-' + my_username);
     }
     else
     {
@@ -295,35 +238,40 @@ function getUserKey()
     return keyArray;
 }
 
+
 var cs255 = {
-    localStorage: {
-        setItem: function(key, value) {
-            localStorage.setItem(key, value);
-            var newEntries = {};
-            newEntries[key] = value;
-            chrome.storage.local.set(newEntries);
-        },
-        getItem: function(key) {
-            return localStorage.getItem(key);
-        },
-        clear: function() {
-            chrome.storage.local.clear();
-        }
+  localStorage: {
+    setItem: function(key, value) {
+      localStorage.setItem(key, value);
+      var newEntries = {};
+      newEntries[key] = value;
+      chrome.storage.local.set(newEntries);
+    },
+    getItem: function(key) {
+      return localStorage.getItem(key);
+    },
+    clear: function() {
+      chrome.storage.local.clear();
     }
+  }
 }
 
 if (typeof chrome.storage === "undefined") {
-    var id = function() {};
-    chrome.storage = {local: {get: id, set: id}};
+  var id = function() {};
+  chrome.storage = {local: {get: id, set: id}};
 }
 else {
-    // See if there are any values stored with the extension.
-    chrome.storage.local.get(null, function(onDisk) {
-        for (key in onDisk) {
-            localStorage.setItem(key, onDisk[key]);
-        }
-    });
+  // See if there are any values stored with the extension.
+  chrome.storage.local.get(null, function(onDisk) {
+    for (key in onDisk) {
+      localStorage.setItem(key, onDisk[key]);
+    }
+  });
 }
+
+
+
+
 /////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////
 //
@@ -419,7 +367,6 @@ function rot13(text) {
 }
 
 function SetupUsernames() {
-    //if (!my_username){cs255.localStorage.clear();}
   // get who you are logged in as
   var meta = document.getElementsByClassName('navItem tinyman')[0];
   if (typeof meta !== "undefined") {
@@ -429,7 +376,6 @@ function SetupUsernames() {
     usernameMatched = usernameMatched.replace(/profile\.phpid=/, '');
     my_username = usernameMatched; // Update global.
   }
-  //  if (!my_username){cs255.localStorage.clear();}
 }
 
 function getClassName(obj) {
@@ -527,25 +473,26 @@ function AddEncryptionTab() {
       table.setAttribute('width', "80%");
       div.appendChild(table);
 
-    var clearSessionStorage = document.createElement('button');
-    clearSessionStorage.innerHTML = "Clear sessionStorage";
-    clearSessionStorage.addEventListener("click", function() {
+
+      var clearSessionStorage = document.createElement('button');
+      clearSessionStorage.innerHTML = "Clear sessionStorage";
+      clearSessionStorage.addEventListener("click", function() {
         sessionStorage.clear();
         console.log("Cleared sessionStorage.");
-    });
+      });
 
-    div.appendChild(document.createElement('br'));
-    div.appendChild(clearSessionStorage);
-    var clearLocalStorage = document.createElement('button');
-    clearLocalStorage.innerHTML = "Clear localStorage";
-    clearLocalStorage.addEventListener("click", function() {
+      div.appendChild(document.createElement('br'));
+      div.appendChild(clearSessionStorage);
+      var clearLocalStorage = document.createElement('button');
+      clearLocalStorage.innerHTML = "Clear localStorage";
+      clearLocalStorage.addEventListener("click", function() {
         localStorage.clear();
         cs255.localStorage.clear();
         console.log("Cleared localStorage, including the extension cache.");
-    });
+      });
 
-    div.appendChild(document.createElement('br'));
-    div.appendChild(clearLocalStorage);
+      div.appendChild(document.createElement('br'));
+      div.appendChild(clearLocalStorage);
     }
   }
 }
@@ -637,7 +584,7 @@ function GenerateKeyWrapper() {
     alert("You need to set a group");
     return;
   }
-    debugger;
+
   GenerateKey(group);
   
   UpdateKeysTable();
@@ -1772,12 +1719,12 @@ sjcl.hash.sha256.prototype = {
 
 
 // This is the initialization
-
 SetupUsernames();
 LoadKeys();
 AddElements();
 UpdateKeysTable();
 RegisterChangeEvents();
+
 
 console.log("CS255 script finished loading.");
 
