@@ -30,13 +30,84 @@ var keys = {}; // association map of keys: group -> key
 // Some initialization functions are called at the very end of this script.
 // You only have to edit the top portion.
 
+
+function davies_meyer(msg,chaining)
+{
+    if (msg.length != 4)    return null;
+    var cipher = new sjcl.cipher.aes(msg);
+    var aes_output = cipher.encrypt(chaining);
+    var output = [chaining[0]^aes_output[0],chaining[1]^aes_output[1],chaining[2]^aes_output[2],chaining[3]^aes_output[3]];
+    return output;
+}
+
+/*
+Implements the merkle-damgard hash function for a message of
+arbitrary length and fixed iv. Uses the Davies Meyer hash function.
+ */
+function merkle_damgard(msg,iv)
+{
+    var i = 0;
+    var prev = [iv[0],iv[1],iv[2],iv[3]];
+    while(i+3<msg.length)
+    {
+        var wordBlock = [];
+        for (var k = 0;k<4;k++)
+        {
+            wordBlock.push(msg[i+k]);
+        }
+        prev = davies_meyer(wordBlock,prev);
+        i = i + 4;
+    }
+    return prev;
+}
+
+/*
+    Padding for Merkle-Damgard hash construction.
+    Pads 1000... and message length at the end of the message
+ */
+function merkle_damgard_padding(msg)
+{
+    var output = [];
+    // create a copy of the message
+    for (var k = 0;k<msg.length;k++)
+    {
+        output.push(msg[k]);
+    }
+
+    var extraWords = 4 - (msg.length % 4);
+    // create length padding
+    var lengthPadding = [];
+    var len = msg.length;
+    if (len >= 1<<30)
+        lengthPadding = len;
+    else
+    {
+        lengthPadding.push(0);
+        lengthPadding.push(len);
+    }
+    var extraPaddingWords = extraWords - 2;
+    if (extraPaddingWords < 0)
+        extraPaddingWords += 4;
+
+    // pad bit pattern 10000..
+    if (extraPaddingWords!=0)
+    {
+        output.push(1<<31);
+        for (var k = 0;k<extraPaddingWords-1;k++)
+        {
+            output.push(0);
+        }
+    }
+    output.push(lengthPadding[0]);
+    output.push(lengthPadding[1]);
+    return output;
+}
+
 /*
  n byte padding by putting [n n n] ... n times.
  */
 function addPadding(text)
 {
-    var lastIndex = text.length - 1;
-
     var extraWords = 4 - (text.length % 4);
     for (var i = 0;i<extraWords;i++)
     {
@@ -132,20 +203,29 @@ function cbc_decrypt(ctext,cipher)
 // @return {String} Encryption of the plaintext, encoded as a string.
 function Encrypt(plainText, group) {
 
-  var key = sjcl.codec.base64.toBits(keys[group]);
-  var cipher = new sjcl.cipher.aes(key);
+  if (group in keys)
+  {
+      var key = sjcl.codec.base64.toBits(keys[group]);
+      if (key.length != 4)
+            return plainText;
 
-  if ((plainText.indexOf('aes:') == 0) || (plainText.length < 1)) {
-    // already done, or blank
-    alert("Try entering a message (the button works only once)");
-    return plainText;
-  } else {
-    // encrypt, add tag.
-    var ptext = addPadding(sjcl.codec.utf8String.toBits(plainText));
-    var encrypted_msg = cbc_encrypt(ptext,cipher);
-    return 'aes:' + sjcl.codec.base64.fromBits(encrypted_msg);
+      var cipher = new sjcl.cipher.aes(key);
+
+      if ((plainText.indexOf('aes:') == 0) || (plainText.length < 1)) {
+        // already done, or blank
+        alert("Try entering a message (the button works only once)");
+        return plainText;
+      } else {
+        // encrypt, add tag.
+        var ptext = addPadding(sjcl.codec.utf8String.toBits(plainText));
+        var encrypted_msg = cbc_encrypt(ptext,cipher);
+        return sjcl.codec.base64.fromBits(encrypted_msg);
+      }
   }
-
+    else
+  {
+      return plainText;
+  }
 }
 
 // Return the decryption of the message for the given group, in the form of a string.
@@ -155,29 +235,32 @@ function Encrypt(plainText, group) {
 // @param {String} group Group name.
 // @return {String} Decryption of the ciphertext.
 function Decrypt(cipherText, group) {
-
-
-    var key = sjcl.codec.base64.toBits(keys[group]);
-    var cipher = new sjcl.cipher.aes(key);
-    if (cipherText.indexOf('aes:') == 0) {
-
-    // decrypt, ignore the tag.
-    var ctext = sjcl.codec.base64.toBits(cipherText.slice(4));
-    var decrypted_msg = cbc_decrypt(ctext,cipher);
-    var withoutPadding = removePadding(decrypted_msg);
-    if (withoutPadding.length < decrypted_msg.length)
+    if (group in keys)
     {
-    var ptext = sjcl.codec.utf8String.fromBits(removePadding(decrypted_msg));
-    return ptext;
+        var key = sjcl.codec.base64.toBits(keys[group]);
+        if (key.length != 4)
+            throw "Cannot Decrypt";
+
+        var cipher = new sjcl.cipher.aes(key);
+
+
+        var ctext = sjcl.codec.base64.toBits(cipherText);
+        var decrypted_msg = cbc_decrypt(ctext,cipher);
+        var withoutPadding = removePadding(decrypted_msg);
+        if (withoutPadding.length < decrypted_msg.length)
+        {
+        var ptext = sjcl.codec.utf8String.fromBits(removePadding(decrypted_msg));
+        return ptext;
+        }
+        else
+        {
+            throw "Cannot decrypt";
+        }
     }
     else
     {
         throw "Cannot decrypt";
     }
-
-  } else {
-    throw "not encrypted";
-  }
 }
 
 // Generate a new key for the given group.
@@ -194,6 +277,8 @@ function SaveKeys() {
 
   if (!my_username) return;
   var userKey = getUserKey();
+  if (!userKey)   return;
+  if (userKey.length != 4)  return;
   var cipher = new sjcl.cipher.aes(userKey);
 
   var key_str = JSON.stringify(keys);
@@ -208,12 +293,14 @@ function LoadKeys() {
 
     if (!my_username) return;
     var userKey = getUserKey();
+    if (!userKey)   return;
 
     keys = {}; // Reset the keys.
 
     var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
     if (saved)
     {
+        if (userKey.length != 4)    return;
         var cipher = new sjcl.cipher.aes(userKey);
         var retreived_key = sjcl.codec.base64.toBits(decodeURIComponent(saved));
         var decrypted_msg = cbc_decrypt(retreived_key,cipher);
@@ -236,28 +323,71 @@ function LoadKeys() {
     }
 }
 
+/*
+   Checks if the hash of the user entered password matches the
+   one on disk. Used the Davies-Meyer hash function. The fixed IV is
+   generated at the beginning and stored on disk.
+ */
+function verifyKey(key)
+{
+    var keyPadded = merkle_damgard_padding(key);
+    var storedIV = cs255.localStorage.getItem('user-iv-' + my_username);
+    var storedHash = cs255.localStorage.getItem('key-hash-' + my_username);
+
+    // First time, setting up data for a new user
+    if (!storedIV && !storedHash)
+    {
+        var iv = GetRandomValues(4);
+        var iv_string = sjcl.codec.base64.fromBits(iv);
+        cs255.localStorage.setItem('user-iv-' + my_username,iv_string);
+        var keyHash = merkle_damgard(keyPadded,iv);
+        var keyHash_string = sjcl.codec.base64.fromBits(keyHash);
+        cs255.localStorage.setItem('key-hash-' + my_username,keyHash_string);
+        return true;
+    }
+    else
+    {
+        // If only one is present, local storage corrupt.
+        if (!storedIV || !storedHash)   return false;
+        var hash = sjcl.codec.base64.toBits(storedHash);
+        var iv = sjcl.codec.base64.toBits(storedIV);
+        var keyHash = merkle_damgard(keyPadded,iv);
+        return sjcl.bitArray.equal(keyHash,hash);
+    }
+}
+
 function getUserKey()
 {
     var storeddbKey = sessionStorage.getItem('user-keys-' + my_username);
     if (!storeddbKey)
     {
-        var dbpass = prompt('Enter key database password');
-        var stored_salt = cs255.localStorage.getItem('user-salt-' + my_username);
-        if (stored_salt)
+        var passwordCorrect = false;
+        // Keep reprompting until correct password entered
+        while(!passwordCorrect)
         {
-            var salt = sjcl.codec.base64.toBits(decodeURIComponent(stored_salt));
-        }
-        else
-        {
-            var salt = GetRandomValues(4);
-            var salt_string = sjcl.codec.base64.fromBits(salt);
-            cs255.localStorage.setItem('user-salt-' + my_username,encodeURIComponent(salt_string));
-        }
+            var dbpass = prompt('Enter key database password');
+            // If user suppresses prompt or cancels prompt
+            if (!dbpass)    return null;
+            var stored_salt = cs255.localStorage.getItem('user-salt-' + my_username);
+            if (stored_salt)
+            {
+                var salt = sjcl.codec.base64.toBits(decodeURIComponent(stored_salt));
 
-        var keyArray = sjcl.misc.pbkdf2(dbpass, salt, null, 128);
+            }
+            else
+            {
+                var salt = GetRandomValues(4);
+                var salt_string = sjcl.codec.base64.fromBits(salt);
+                cs255.localStorage.setItem('user-salt-' + my_username,encodeURIComponent(salt_string));
+            }
+
+            var keyArray = sjcl.misc.pbkdf2(dbpass, salt, null, 128);
+            passwordCorrect = verifyKey(keyArray);
+            if (!passwordCorrect)
+                alert("Incorrect Password. Try again. If this is unexpected, delete all cookies and set new passwords");
+        }
         var key_str = sjcl.codec.base64.fromBits(keyArray);
         sessionStorage.setItem('user-keys-' + my_username,encodeURIComponent(key_str));
-        var checkSave = sessionStorage.getItem('user-keys-' + my_username);
     }
     else
     {
