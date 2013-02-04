@@ -267,6 +267,8 @@ function Decrypt(cipherText, group) {
 //
 // @param {String} group Group name.
 function GenerateKey(group) {
+  var userKey = getUserKey();
+  if (!userKey) return;
   var key = GetRandomValues(4);
   keys[group] = sjcl.codec.base64.fromBits(key);
   SaveKeys();
@@ -367,7 +369,11 @@ function getUserKey()
         {
             var dbpass = prompt('Enter key database password');
             // If user suppresses prompt or cancels prompt
-            if (!dbpass)    return null;
+            if (!dbpass)
+            {
+                alert("You can continue using Facebook. But you won't be able to encrypt/decrypt messages");
+                return null;
+            }
             var stored_salt = cs255.localStorage.getItem('user-salt-' + my_username);
             if (stored_salt)
             {
