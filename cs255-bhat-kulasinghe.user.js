@@ -635,25 +635,6 @@ function AddEncryptionTab() {
       table.setAttribute('width', "80%");
       div.appendChild(table);
 
-    var clearSessionStorage = document.createElement('button');
-    clearSessionStorage.innerHTML = "Clear sessionStorage";
-    clearSessionStorage.addEventListener("click", function() {
-        sessionStorage.clear();
-        console.log("Cleared sessionStorage.");
-    });
-
-    div.appendChild(document.createElement('br'));
-    div.appendChild(clearSessionStorage);
-    var clearLocalStorage = document.createElement('button');
-    clearLocalStorage.innerHTML = "Clear localStorage";
-    clearLocalStorage.addEventListener("click", function() {
-        localStorage.clear();
-        cs255.localStorage.clear();
-        console.log("Cleared localStorage, including the extension cache.");
-    });
-
-    div.appendChild(document.createElement('br'));
-    div.appendChild(clearLocalStorage);
     }
   }
 }
