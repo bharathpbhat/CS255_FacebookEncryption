@@ -211,7 +211,7 @@ function Encrypt(plainText, group) {
 
       var cipher = new sjcl.cipher.aes(key);
 
-      if ((plainText.indexOf('aes:') == 0) || (plainText.length < 1)) {
+      if ((plainText.indexOf('encrypted:') == 0) || (plainText.length < 1)) {
         // already done, or blank
         alert("Try entering a message (the button works only once)");
         return plainText;
@@ -219,7 +219,7 @@ function Encrypt(plainText, group) {
         // encrypt, add tag.
         var ptext = addPadding(sjcl.codec.utf8String.toBits(plainText));
         var encrypted_msg = cbc_encrypt(ptext,cipher);
-        return sjcl.codec.base64.fromBits(encrypted_msg);
+        return 'encrypted:' + sjcl.codec.base64.fromBits(encrypted_msg);
       }
   }
     else
@@ -235,6 +235,8 @@ function Encrypt(plainText, group) {
 // @param {String} group Group name.
 // @return {String} Decryption of the ciphertext.
 function Decrypt(cipherText, group) {
+
+    if (cipherText.indexOf('encrypted:') == 0) {
     if (group in keys)
     {
         var key = sjcl.codec.base64.toBits(keys[group]);
@@ -244,7 +246,7 @@ function Decrypt(cipherText, group) {
         var cipher = new sjcl.cipher.aes(key);
 
 
-        var ctext = sjcl.codec.base64.toBits(cipherText);
+        var ctext = sjcl.codec.base64.toBits(cipherText.slice(10));
         var decrypted_msg = cbc_decrypt(ctext,cipher);
         var withoutPadding = removePadding(decrypted_msg);
         if (withoutPadding.length < decrypted_msg.length)
@@ -260,6 +262,11 @@ function Decrypt(cipherText, group) {
     else
     {
         throw "Cannot decrypt";
+    }
+    }
+    else
+    {
+        throw "Not encrypted";
     }
 }
 
