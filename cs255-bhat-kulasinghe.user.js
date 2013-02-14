@@ -104,16 +104,30 @@ function merkle_damgard_padding(msg)
 }
 
 /*
- n byte padding by putting [n n n] ... n times.
+ Padding by first checking bits (n) to be added, then putting [n n n] ... as words to form
+ a full block.
  */
 function addPadding(text)
 {
+    var textCopy = [];
+    for (var i = 0;i<text.length;i++)
+    {
+        textCopy.push(text[i]);
+    }
+    var bitLen = sjcl.bitArray.bitLength(text);
+
     var extraWords = 4 - (text.length % 4);
+    var addBits = 32 - (bitLen % 32);
+    if (addBits == 32)
+    {
+        addBits = 0;
+    }
+    var extraBits = extraWords*32 + addBits;
     for (var i = 0;i<extraWords;i++)
     {
-        text.push(extraWords);
+        textCopy.push(extraBits);
     }
-    return text;
+    return textCopy;
 }
 
 /*
@@ -122,7 +136,9 @@ function addPadding(text)
 function removePadding(text)
 {
     var text_copy = [];
-    var extraWords = text[text.length-1];
+    var extraBits = text[text.length-1];
+    var extraWords = Math.floor(extraBits/32);
+    var removeBits = extraBits % 32;
     if (extraWords <= 0 || extraWords > 4)
     {
         console.log("Padding not removed");
@@ -132,8 +148,33 @@ function removePadding(text)
     {
         text_copy[i] = text[i];
     }
-    return text_copy;
+    var numBits = sjcl.bitArray.bitLength(text_copy) - removeBits;
+    return sjcl.bitArray.bitSlice(text_copy,0,numBits);
 }
+
+/*
+Construction of CBC Mac. Note that this just returns the serial CBC output with one key. (last block)
+ */
+function cbc_encrypt_forMac(ptext,cipher)
+{
+    var i = 0;
+    var prev = [0,0,0,0];
+    var encrypted_str = [];
+    if (ptext.length==0)return null;
+    while(i+3<ptext.length)
+    {
+        var block = [];
+        for (var k = 0;k<4;k++)
+        {
+            block.push(ptext[i+k]);
+        }
+        var input_aes = [prev[0]^block[0],prev[1]^block[1],prev[2]^block[2],prev[3]^block[3]];
+        prev = cipher.encrypt(input_aes);
+        i = i + 4;
+    }
+    return prev;
+}
+
 
 /*
 CBC with random 128 bit IV. The IV is embedded in the first 4 words of the cipher text
@@ -196,6 +237,14 @@ function cbc_decrypt(ctext,cipher)
     return decrypted_msg;
 }
 
+function computeMACtag(cipherText,key1,key2)
+{
+    var cipher = new sjcl.cipher.aes(key1);
+    var lastBlock = cbc_encrypt_forMac(cipherText,cipher);
+
+    var lastAES = new sjcl.cipher.aes(key2);
+    return lastAES.encrypt(lastBlock);
+}
 // Return the encryption of the message for the given group, in the form of a string.
 //
 // @param {String} plainText String to encrypt.
@@ -203,23 +252,31 @@ function cbc_decrypt(ctext,cipher)
 // @return {String} Encryption of the plaintext, encoded as a string.
 function Encrypt(plainText, group) {
 
+    //plainText = "second\0null\0test";
+    //plainText = plainText.concat('\0');//plainText = plainText.concat("test\0");//plainText = plainText.concat('\0');plainText = plainText.concat('\0');plainText = plainText.concat('\0');
   if (group in keys)
   {
       var key = sjcl.codec.base64.toBits(keys[group]);
-      if (key.length != 4)
+      if (key.length != 12)
             return plainText;
+      var encKey = key.slice(0,4);
+      var macKey1 = key.slice(4,8);
+      var macKey2 = key.slice(8);
 
-      var cipher = new sjcl.cipher.aes(key);
+      var cipher = new sjcl.cipher.aes(encKey);
 
-      if ((plainText.indexOf('encrypted:') == 0) || (plainText.length < 1)) {
+      if (plainText.indexOf('encrypted:') == 0) {
         // already done, or blank
         alert("Try entering a message (the button works only once)");
         return plainText;
       } else {
         // encrypt, add tag.
-        var ptext = addPadding(sjcl.codec.utf8String.toBits(plainText));
+        var beforePadding = sjcl.codec.utf8String.toBits(plainText)
+        var ptext = addPadding(beforePadding);
         var encrypted_msg = cbc_encrypt(ptext,cipher);
-        return 'encrypted:' + sjcl.codec.base64.fromBits(encrypted_msg);
+        var message_tag = computeMACtag(encrypted_msg,macKey1,macKey2);
+        var full_message = sjcl.bitArray.concat(message_tag,encrypted_msg);
+        return 'encrypted:' + sjcl.codec.base64.fromBits(full_message);
       }
   }
     else
@@ -240,19 +297,30 @@ function Decrypt(cipherText, group) {
     if (group in keys)
     {
         var key = sjcl.codec.base64.toBits(keys[group]);
-        if (key.length != 4)
+        if (key.length != 12)
             throw "Cannot Decrypt";
+        var encKey = key.slice(0,4);
+        var macKey1 = key.slice(4,8);
+        var macKey2 = key.slice(8);
 
-        var cipher = new sjcl.cipher.aes(key);
+        var cipher = new sjcl.cipher.aes(encKey);
 
 
         var ctext = sjcl.codec.base64.toBits(cipherText.slice(10));
-        var decrypted_msg = cbc_decrypt(ctext,cipher);
+
+        var tagInMessage = ctext.slice(0,4);
+        var messagePayload = ctext.slice(4);
+        var computedTag = computeMACtag(messagePayload,macKey1,macKey2);
+        if (!sjcl.bitArray.equal(tagInMessage,computedTag))
+            throw "Corrupted Message";
+
+        var decrypted_msg = cbc_decrypt(messagePayload,cipher);
         var withoutPadding = removePadding(decrypted_msg);
-        if (withoutPadding.length < decrypted_msg.length)
+        var diff = decrypted_msg.length - withoutPadding.length;
+        if (diff > 0)
         {
-        var ptext = sjcl.codec.utf8String.fromBits(removePadding(decrypted_msg));
-        return ptext;
+            var ptext = sjcl.codec.utf8String.fromBits(withoutPadding);
+            return ptext;
         }
         else
         {
@@ -276,7 +344,7 @@ function Decrypt(cipherText, group) {
 function GenerateKey(group) {
   var userKey = getUserKey();
   if (!userKey) return;
-  var key = GetRandomValues(4);
+  var key = GetRandomValues(12);
   keys[group] = sjcl.codec.base64.fromBits(key);
   SaveKeys();
 }
@@ -286,14 +354,24 @@ function SaveKeys() {
 
   if (!my_username) return;
   var userKey = getUserKey();
-  if (!userKey)   return;
-  if (userKey.length != 4)  return;
-  var cipher = new sjcl.cipher.aes(userKey);
+  if (!userKey)   {
+      keys = {};
+      return;
+  }
+  if (userKey.length != 12)  return;
+  var userKeyEnc = userKey.slice(0,4);
+
+  var userKeyMAC1 = userKey.slice(4,8);
+  var userKeyMAC2 = userKey.slice(8);
+
+  var cipher = new sjcl.cipher.aes(userKeyEnc);
 
   var key_str = JSON.stringify(keys);
   var padded = addPadding(sjcl.codec.utf8String.toBits(key_str));
   var encrypted_db = cbc_encrypt(padded,cipher);
-  var saved_key = encodeURIComponent(sjcl.codec.base64.fromBits(encrypted_db));
+  var db_tag = computeMACtag(encrypted_db,userKeyMAC1,userKeyMAC2);
+  var db_complete = sjcl.bitArray.concat(db_tag,encrypted_db);
+  var saved_key = encodeURIComponent(sjcl.codec.base64.fromBits(db_complete));
   cs255.localStorage.setItem('facebook-keys-' + my_username, saved_key);
 }
 
@@ -309,10 +387,23 @@ function LoadKeys() {
     var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
     if (saved)
     {
-        if (userKey.length != 4)    return;
-        var cipher = new sjcl.cipher.aes(userKey);
-        var retreived_key = sjcl.codec.base64.toBits(decodeURIComponent(saved));
-        var decrypted_msg = cbc_decrypt(retreived_key,cipher);
+        if (userKey.length != 12)    return;
+        var userKeyEnc = userKey.slice(0,4);
+        var userKeyMAC1 = userKey.slice(4,8);
+        var userKeyMAC2 = userKey.slice(8)
+
+        var cipher = new sjcl.cipher.aes(userKeyEnc);
+
+        var retrieved_key = sjcl.codec.base64.toBits(decodeURIComponent(saved));
+        var tag_indb = retrieved_key.slice(0,4);
+        var db_payload = retrieved_key.slice(4);
+        var computed_tag = computeMACtag(db_payload,userKeyMAC1,userKeyMAC2);
+        if (!sjcl.bitArray.equal(computed_tag,tag_indb))
+        {
+            alert('Local storage corrupt/Incorrect Password. Please clear local storage and save keys again');
+            return;
+        }
+        var decrypted_msg = cbc_decrypt(db_payload,cipher);
         var withoutPadding = removePadding(decrypted_msg);
 
         //catch error when trying to decrypt with wrong key
@@ -323,12 +414,14 @@ function LoadKeys() {
         var ptext_db = sjcl.codec.utf8String.fromBits(withoutPadding);
 
         // This is to remove terminating nulls, which JSON.parse hates
+        /*
         var buff = '';
         for (var i = 0;i<ptext_db.length && ptext_db.charCodeAt(i) != 0;i++)
         {
             buff = buff + ptext_db.charAt(i);
         }
-        keys = JSON.parse(buff);
+        */
+        keys = JSON.parse(ptext_db);
     }
 }
 
@@ -365,6 +458,29 @@ function verifyKey(key)
     }
 }
 
+function verifyKeyWithDatabase(key)
+{
+    var saved = cs255.localStorage.getItem('facebook-keys-' + my_username);
+    if (!saved) return true;
+
+    var userKeyEnc = key.slice(0,4);
+    var userKeyMAC1 = key.slice(4,8);
+    var userKeyMAC2 = key.slice(8)
+
+    var cipher = new sjcl.cipher.aes(userKeyEnc);
+
+    var retrieved_key = sjcl.codec.base64.toBits(decodeURIComponent(saved));
+    var tag_indb = retrieved_key.slice(0,4);
+    var db_payload = retrieved_key.slice(4);
+    var computed_tag = computeMACtag(db_payload,userKeyMAC1,userKeyMAC2);
+    if (!sjcl.bitArray.equal(computed_tag,tag_indb))
+    {
+        alert('Local storage corrupt/Incorrect Password. Please clear local storage and save keys again');
+        return false;
+    }
+    return true;
+}
+
 function getUserKey()
 {
     var storeddbKey = sessionStorage.getItem('user-keys-' + my_username);
@@ -389,15 +505,15 @@ function getUserKey()
             }
             else
             {
-                var salt = GetRandomValues(4);
+                var salt = GetRandomValues(12);
                 var salt_string = sjcl.codec.base64.fromBits(salt);
                 cs255.localStorage.setItem('user-salt-' + my_username,encodeURIComponent(salt_string));
             }
 
-            var keyArray = sjcl.misc.pbkdf2(dbpass, salt, null, 128);
-            passwordCorrect = verifyKey(keyArray);
-            if (!passwordCorrect)
-                alert("Incorrect Password. Try again. If this is unexpected, delete all cookies and set new passwords");
+            var keyArray = sjcl.misc.pbkdf2(dbpass, salt, null, 128*3);
+            passwordCorrect = verifyKeyWithDatabase(keyArray);
+          //  if (!passwordCorrect)
+            //    alert("Incorrect Password. Try again. If this is unexpected, delete all cookies and set new passwords");
         }
         var key_str = sjcl.codec.base64.fromBits(keyArray);
         sessionStorage.setItem('user-keys-' + my_username,encodeURIComponent(key_str));
@@ -641,7 +757,25 @@ function AddEncryptionTab() {
       table.setAttribute('border', 1);
       table.setAttribute('width', "80%");
       div.appendChild(table);
+        var clearSessionStorage = document.createElement('button');
+        clearSessionStorage.innerHTML = "Clear sessionStorage";
+        clearSessionStorage.addEventListener("click", function() {
+            sessionStorage.clear();
+            console.log("Cleared sessionStorage.");
+        });
 
+        div.appendChild(document.createElement('br'));
+        div.appendChild(clearSessionStorage);
+        var clearLocalStorage = document.createElement('button');
+        clearLocalStorage.innerHTML = "Clear localStorage";
+        clearLocalStorage.addEventListener("click", function() {
+            localStorage.clear();
+            cs255.localStorage.clear();
+            console.log("Cleared localStorage, including the extension cache.");
+        });
+
+        div.appendChild(document.createElement('br'));
+        div.appendChild(clearLocalStorage);
     }
   }
 }
